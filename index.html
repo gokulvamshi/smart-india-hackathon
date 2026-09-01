@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#FFF8E8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>Smart Farm</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- App Header with Language Selector -->
+    <header id="app-header">
+        <div class="header-left">
+            <span class="logo-icon">🌱</span>
+            <h1 data-i18n="app_title">Smart Farm</h1>
+        </div>
+        <div class="header-center" id="connection-status">
+            <span class="status-dot"></span>
+            <span class="status-text" data-i18n="connecting">Connecting...</span>
+        </div>
+        <div class="header-right">
+            <select id="language-selector" aria-label="Select Language">
+                <option value="en">English</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+                <option value="mr">मराठी (Marathi)</option>
+                <option value="te">తెలుగు (Telugu)</option>
+                <option value="ta">தமிழ் (Tamil)</option>
+                <option value="kn">ಕನ್ನಡ (Kannada)</option>
+                <option value="ml">മലയാളം (Malayalam)</option>
+                <option value="bn">বাংলা (Bengali)</option>
+                <option value="gu">ગુજરાતી (Gujarati)</option>
+                <option value="pa">ਪੰਜਾਬੀ (Punjabi)</option>
+                <option value="or">ଓଡ଼ିଆ (Odia)</option>
+                <option value="as">অসমীয়া (Assamese)</option>
+            </select>
+        </div>
+    </header>
+
+    <!-- Main Dashboard -->
+    <main id="dashboard">
+        <!-- Reconnecting Overlay -->
+        <div id="offline-overlay">
+            <div class="overlay-content">
+                <div class="spinner"></div>
+                <h2 data-i18n="offline">Not Connected</h2>
+                <p data-i18n="offline_desc">Ensure you are connected to the "AgriSense_Node" Wi-Fi.</p>
+            </div>
+        </div>
+
+        <!-- Firmware Alert Message -->
+        <div id="system-alert" class="alert-banner hidden">
+            <span class="icon">⚠️</span>
+            <span id="alert-text">System Initializing...</span>
+        </div>
+
+        <!-- Primary Status Card: Moisture -->
+        <section class="card primary-status" id="moisture-card">
+            <div class="card-header">
+                <span class="icon big-icon" id="moisture-icon">🌱</span>
+            </div>
+            <h2 id="moisture-headline" data-i18n="checking_soil">Checking Soil...</h2>
+            <div class="metric-row">
+                <span data-i18n="moisture_label">Moisture:</span>
+                <span id="moisture-value" class="metric-value">--%</span>
+            </div>
+        </section>
+
+        <!-- Secondary Metrics Grid (2x2) -->
+        <div class="grid-2">
+            <!-- Temperature (Left exactly as requested) -->
+            <section class="card secondary-card">
+                <div class="card-header">
+                    <span class="icon">🌡️</span>
+                    <h3 data-i18n="temp_title">Temperature</h3>
+                </div>
+                <div class="metric-display">
+                    <span id="temp-value" class="metric-value">-- °C</span>
+                </div>
+            </section>
+
+            <!-- Humidity (Now uses qualitative words) -->
+            <section class="card secondary-card">
+                <div class="card-header">
+                    <span class="icon">💧</span>
+                    <h3 data-i18n="hum_title">Humidity</h3>
+                </div>
+                <div class="metric-display text-center">
+                    <div id="humidity-status" class="status-label">--</div>
+                    <div id="humidity-value" class="card-desc small-metric">--%</div>
+                </div>
+            </section>
+            
+            <!-- VPD (Now uses qualitative words) -->
+            <section class="card secondary-card">
+                <div class="card-header">
+                    <span class="icon">💨</span>
+                    <h3 data-i18n="vpd_title">VPD Stress</h3>
+                </div>
+                <div class="metric-display text-center">
+                    <div id="vpd-status" class="status-label">--</div>
+                    <div id="vpd-value" class="card-desc small-metric">-- kPa</div>
+                </div>
+            </section>
+
+            <!-- Pump Status -->
+            <section class="card secondary-card" id="pump-card">
+                <div class="card-header">
+                    <span class="icon" id="pump-icon">🚰</span>
+                    <h3 data-i18n="pump_title">Water Pump</h3>
+                </div>
+                <div class="metric-display text-center">
+                    <span id="pump-status" class="status-label" data-i18n="pump_off">Not Watering</span>
+                </div>
+                <div id="pump-animation" class="hidden">
+                    <div class="wave"></div><div class="wave"></div><div class="wave"></div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Automatic Irrigation Toggle -->
+        <section class="card control-card">
+            <div class="control-header">
+                <div class="control-title">
+                    <span class="icon">🤖</span>
+                    <h3 data-i18n="auto_title">Automatic Irrigation</h3>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="auto-toggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p id="auto-desc" class="card-desc" data-i18n="auto_desc">The farm will water itself between 30% and 60% moisture.</p>
+        </section>
+
+        <!-- DISABLED FEATURE: Disaster Prediction -->
+        <section class="card disabled-card">
+            <div class="control-header">
+                <div class="control-title">
+                    <span class="icon">🌪️</span>
+                    <h3 data-i18n="disaster_title">Disaster Prediction</h3>
+                </div>
+                <span class="icon lock-icon">🔒</span>
+            </div>
+            <p class="card-desc warning-text" data-i18n="disaster_desc">Currently disabled. No environmental disaster sensors are connected. This is a future add-on feature.</p>
+        </section>
+
+        <!-- Action Buttons (No Confirmations) -->
+        <div class="action-bar">
+            <button id="btn-manual-water" class="btn btn-primary" data-i18n="btn_water">WATER NOW</button>
+            <button id="btn-emergency-stop" class="btn btn-danger" data-i18n="btn_emergency">EMERGENCY STOP</button>
+        </div>
+    </main>
+
+    <!-- Failsafe Banner -->
+    <div id="failsafe-banner" class="hidden">
+        <span class="icon">🚨</span>
+        <span data-i18n="failsafe_alert">DRY-RUN FAILSAFE TRIGGERED. PUMP DISABLED.</span>
+    </div>
+
+    <!-- Toasts Container -->
+    <div id="toast-container"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
