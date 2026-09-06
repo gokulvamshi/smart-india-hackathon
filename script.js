@@ -1,391 +1,268 @@
 /**
- * SMART FARM - Hardware Production Version
- * Multilingual Support + Direct ESP32 Communication + Qualitative Range Parsing
+ * ESP32 Smart Farm Dashboard Logic
+ * Role: API Polling, Hardware Interfacing, Trend Analysis, Dynamic Localization
  */
 
-// --- CONFIGURATION ---
-const CONFIG = {
-    ESP32_BASE_URL: "http://192.168.4.1/api",
-    POLL_INTERVAL: 2000, // Matches ESP32 DHT11 limitation
-    TIMEOUT: 4000
+// --- 1. Configuration & Constants ---
+const ESP32_BASE_URL = "http://192.168.4.1/api";
+const POLL_INTERVAL_MS = 2500;
+const SOIL_DRY_THRESHOLD = 30.0; // Matches Arduino logic
+const SOIL_WET_THRESHOLD = 60.0; // Matches Arduino logic
+
+let historyData = []; // Stores recent soil readings to calculate trends
+let currentLang = "en";
+let isOffline = false;
+let autoModeActive = true;
+let pumpIsOn = false;
+let hasData = false; // Prevents UI glitches before the first successful fetch
+
+// --- 2. Localization Dictionary ---
+const translations = {
+    // Static HTML Elements
+    "t-app-title": { en: "AgriSense Farm", hi: "एग्रीसेंस खेत", mr: "अॅग्रीसेन्स शेत", gu: "એગ્રીસેન્સ ફાર્મ", bn: "এগ্রিসেন্স খামার", ta: "அக்ரிசென்ஸ் பண்ணை", te: "అగ్రిసెన్స్ ఫార్మ్", kn: "ಅಗ್ರಿಸೆನ್ಸ್ ಫಾರ್ಮ್" },
+    "t-reconnecting": { en: "Reconnecting to Farm Node...", hi: "फार्म नोड से फिर जुड़ रहा है...", mr: "फार्म नोडशी पुन्हा जोडत आहे...", gu: "ફાર્મ નોડ સાથે ફરી જોડાઈ રહ્યું છે...", bn: "খামার নোডের সাথে পুনরায় সংযোগ করা হচ্ছে...", ta: "பண்ணை முனையுடன் மீண்டும் இணைக்கிறது...", te: "ఫార్మ్ నోడ్‌కు మళ్లీ కనెక్ట్ అవుతోంది...", kn: "ಫಾರ್ಮ್ ನೋಡ್‌ಗೆ ಮರುಸಂಪರ್ಕಿಸಲಾಗುತ್ತಿದೆ..." },
+    "t-offline-desc": { en: "Please ensure you are connected to the AgriSense_Node WiFi hotspot.", hi: "कृपया सुनिश्चित करें कि आप वाईफाई हॉटस्पॉट से जुड़े हैं।", mr: "कृपया खात्री करा की तुम्ही वायफाय हॉटस्पॉटशी जोडलेले आहात.", gu: "કૃપા કરીને ખાતરી કરો કે તમે વાઇફાઇ હોટસ્પોટ સાથે જોડાયેલા છો.", bn: "অনুগ্রহ করে নিশ্চিত করুন যে আপনি ওয়াইফাই হটস্পটের সাথে সংযুক্ত আছেন।", ta: "வைஃபை ஹாட்ஸ்பாட்டுடன் இணைக்கப்பட்டுள்ளீர்களா என்பதை உறுதிப்படுத்தவும்.", te: "దయచేసి మీరు వైఫై హాట్‌స్పాట్‌కు కనెక్ట్ అయ్యారని నిర్ధారించుకోండి.", kn: "ನೀವು ವೈಫೈ ಹಾಟ್‌ಸ್ಪಾಟ್‌ಗೆ ಸಂಪರ್ಕ ಹೊಂದಿದ್ದೀರಾ ಎಂದು ಖಚಿತಪಡಿಸಿಕೊಳ್ಳಿ." },
+    "t-soil-label": { en: "Moisture:", hi: "नमी:", mr: "आर्द्रता:", gu: "ભેજ:", bn: "আর্দ্রতা:", ta: "ஈரப்பதம்:", te: "తేమ:", kn: "ತೇವಾಂಶ:" },
+    "t-forecast-title": { en: "Farm Insights", hi: "खेत की जानकारी", mr: "शेतीची माहिती", gu: "ફાર્મની માહિતી", bn: "খামারের অন্তর্দৃষ্টি", ta: "பண்ணை நுண்ணறிவு", te: "ఫార్మ్ ఇన్‌సైట్స్", kn: "ಕೃಷಿ ಒಳನೋಟಗಳು" },
+    "t-controls-title": { en: "Irrigation Controls", hi: "सिंचाई नियंत्रण", mr: "सिंचन नियंत्रणे", gu: "સિંચાઈ નિયંત્રણો", bn: "সেচ নিয়ন্ত্রণ", ta: "நீர்ப்பாசன கட்டுப்பாடுகள்", te: "నీటిపారుదల నియంత్రణలు", kn: "ನೀರಾವರಿ ನಿಯಂತ್ರಣಗಳು" },
+    "t-auto-mode": { en: "Automatic Irrigation", hi: "स्वचालित सिंचाई", mr: "स्वयंचलित सिंचन", gu: "સ્વચાલિત સિંચાઈ", bn: "স্বয়ংক্রিয় সেচ", ta: "தானியங்கி நீர்ப்பாசனம்", te: "ఆటోమేటిక్ నీటిపారుదల", kn: "ಸ್ವಯಂಚಾಲಿತ ನೀರಾವರಿ" },
+    "t-manual-pump": { en: "Manual Pump Control", hi: "मैनुअल पंप नियंत्रण", mr: "मॅन्युअल पंप नियंत्रण", gu: "મેન્યુઅલ પંપ નિયંત્રણ", bn: "ম্যানুয়াল পাম্প নিয়ন্ত্রণ", ta: "கைமுறை பம்ப் கட்டுப்பாடு", te: "మాన్యువల్ పంప్ కంట్రోల్", kn: "ಹಸ್ತಚಾಲಿತ ಪಂಪ್ ನಿಯಂತ್ರಣ" },
+    "t-humidity": { en: "Humidity", hi: "नमी (हवा)", mr: "हवेतील आर्द्रता", gu: "ભેજ (હવા)", bn: "আর্দ্রতা (বায়ু)", ta: "காற்றில் ஈரப்பதம்", te: "గాలిలో తేమ", kn: "ಗಾಳಿಯಲ್ಲಿ ತೇವಾಂಶ" },
+    "t-temp": { en: "Temperature", hi: "तापमान", mr: "तापमान", gu: "તાપમાન", bn: "তাপমাত্রা", ta: "வெப்பநிலை", te: "ఉష్ణోగ్రత", kn: "ತಾಪಮಾನ" },
+    "t-vpd": { en: "Water Demand (VPD)", hi: "पौधे की पानी की मांग", mr: "पाण्याची मागणी", gu: "પાણીની માંગ", bn: "জলের চাহিদা", ta: "நீர் தேவை", te: "నీటి డిమాండ్", kn: "ನೀರಿನ ಬೇಡಿಕೆ" },
+    "t-uptime": { en: "Uptime", hi: "अपटाइम", mr: "अपटाइम", gu: "અપટાઇમ", bn: "আপটাইম", ta: "இயங்கும் நேரம்", te: "అప్‌టైమ్", kn: "ಅಪ್‌ಟೈಮ್" },
+    "t-history-title": { en: "Moisture Trend", hi: "नमी की प्रवृत्ति", mr: "आर्द्रता कल", gu: "ભેજનું વલણ", bn: "আর্দ্রতার প্রবণতা", ta: "ஈரப்பதம் போக்கு", te: "తేమ ధోరణి", kn: "ತೇವಾಂಶದ ಪ್ರವೃತ್ತಿ" },
+    
+    // Dynamic Status Logic
+    "status_gathering": { en: "Gathering Data...", hi: "डेटा प्राप्त कर रहा है...", mr: "डेटा गोळा करत आहे...", gu: "ડેટા એકત્રિત કરી રહ્યું છે...", bn: "ডেটা সংগ্রহ করা হচ্ছে...", ta: "தரவை சேகரிக்கிறது...", te: "డేటాను సేకరిస్తోంది...", kn: "ಡೇಟಾವನ್ನು ಸಂಗ್ರಹಿಸಲಾಗುತ್ತಿದೆ..." },
+    "status_perfect": { en: "Perfectly Watered", hi: "पर्याप्त पानी", mr: "उत्तम पाणी दिले", gu: "સંપૂર્ણપણે પાણીયુક્ત", bn: "পর্যাপ্ত জল", ta: "நன்கு நீர் பாய்ச்சப்பட்டது", te: "సంపూర్ణంగా నీరు పెట్టబడింది", kn: "ಪರಿಪೂರ್ಣವಾಗಿ ನೀರುಹಾಕಲಾಗಿದೆ" },
+    "status_dry": { en: "Critically Dry", hi: "अत्यधिक सूखा", mr: "अत्यंत कोरडे", gu: "ખૂબ જ સૂકું", bn: "মারাত্মক শুকনো", ta: "மிகவும் வறண்டது", te: "తీవ్రంగా ఎండినది", kn: "ಅತ್ಯಂತ ಶುಷ್ಕ" },
+    "status_watering": { en: "Irrigating Now", hi: "सिंचाई हो रही है", mr: "सिंचन चालू आहे", gu: "સિંચાઈ ચાલુ છે", bn: "সেচ চলছে", ta: "நீர் பாய்ச்சப்படுகிறது", te: "నీరు పెట్టబడుతోంది", kn: "ನೀರಾವರಿ ನಡೆಯುತ್ತಿದೆ" },
+    
+    // Pump States & Buttons
+    "pump_on": { en: "Pump ON", hi: "पंप चालू", mr: "पंप चालू", gu: "પંપ ચાલુ", bn: "পাম্প চালু", ta: "பம்ப் ஆன்", te: "పంప్ ఆన్", kn: "ಪಂಪ್ ಆನ್" },
+    "pump_off": { en: "Pump OFF", hi: "पंप बंद", mr: "पंप बंद", gu: "પંપ બંધ", bn: "পাম্প বন্ধ", ta: "பம்ப் ஆஃப்", te: "పంప్ ఆఫ్", kn: "ಪಂಪ್ ஆஃப்" },
+    "btn_turn_on": { en: "Turn Pump ON", hi: "पंप चालू करें", mr: "पंप चालू करा", gu: "પંપ ચાલુ કરો", bn: "পাম্প চালু করুন", ta: "பம்ப் ஆன் செய்", te: "పంప్ ఆన్ చేయి", kn: "ಪಂಪ್ ಆನ್ ಮಾಡಿ" },
+    "btn_turn_off": { en: "Turn Pump OFF", hi: "पंप बंद करें", mr: "पंप बंद करा", gu: "પંપ બંધ કરો", bn: "পাম্প বন্ধ করুন", ta: "பம்ப் ஆஃப் செய்", te: "పంప్ ఆఫ్ చేయి", kn: "ಪಂಪ್ ಆಫ್ ಮಾಡಿ" },
+
+    // Forecasts & Recommendations
+    "forecast_stable": { en: "Soil stable for today.", hi: "आज मिट्टी स्थिर है।", mr: "आज माती स्थिर आहे.", gu: "આજે જમીન સ્થિર છે.", bn: "আজ মাটি স্থিতিশীল।", ta: "இன்று மண் சீராக உள்ளது.", te: "ఈ రోజు మట్టి స్థిరంగా ఉంది.", kn: "ಇಂದು ಮಣ್ಣು ಸ್ಥಿರವಾಗಿದೆ." },
+    "forecast_soon": { en: "Watering likely needed soon.", hi: "जल्द ही पानी की जरूरत होगी।", mr: "लवकरच पाण्याची गरज भासेल.", gu: "જલ્દી જ પાણીની જરૂર પડશે.", bn: "শীঘ্রই জলের প্রয়োজন হবে।", ta: "விரைவில் நீர் தேவைப்படும்.", te: "త్వరలో నీరు అవసరం అవుతుంది.", kn: "ಶೀಘ್ರದಲ್ಲೇ ನೀರಿನ ಅಗತ್ಯವಿದೆ." },
+    "forecast_auto": { en: "System is managing irrigation automatically.", hi: "प्रणाली स्वचालित रूप से सिंचाई कर रही है।", mr: "प्रणाली स्वयंचलितपणे सिंचन करत आहे.", gu: "સિસ્ટમ આપમેળે સિંચાઈ કરી રહી છે.", bn: "সিস্টেম স্বয়ংক্রিয়ভাবে সেচ দিচ্ছে।", ta: "கணினி தானாகவே நீர்ப்பாசனத்தை நிர்வகிக்கிறது.", te: "సిస్టమ్ స్వయంచాలకంగా నీటిపారుదలని నిర్వహిస్తోంది.", kn: "ಸಿಸ್ಟಮ್ ಸ್ವಯಂಚಾಲಿತವಾಗಿ ನೀರಾವರಿಯನ್ನು ನಿರ್ವಹಿಸುತ್ತಿದೆ." },
+    "rec_turn_on_pump": { en: "Please turn on manual pump to prevent wilting.", hi: "पौधों को सूखने से बचाने के लिए कृपया मैनुअल पंप चालू करें।", mr: "रोपे सुकण्यापासून वाचवण्यासाठी कृपया मॅन्युअल पंप चालू करा.", gu: "છોડને સુકાતા અટકાવવા કૃપા કરીને મેન્યુઅલ પંપ ચાલુ કરો.", bn: "গাছগুলোকে শুকিয়ে যাওয়া থেকে বাঁচাতে দয়া করে ম্যানুয়াল পাম্প চালু করুন।", ta: "தாவரங்கள் வாடுவதைத் தடுக்க கைமுறை பம்பை இயக்கவும்.", te: "మొక్కలు వాడిపోకుండా ఉండటానికి దయచేసి మాన్యువల్ పంప్‌ను ఆన్ చేయండి.", kn: "ಸಸ್ಯಗಳು ಒಣಗದಂತೆ ತಡೆಯಲು ದಯವಿಟ್ಟು ಕೈಪಿಡಿ ಪಂಪ್ ಆನ್ ಮಾಡಿ." },
+    "rec_soil_adequate": { en: "Soil moisture is adequate based on current VPD.", hi: "वर्तमान स्थिति के अनुसार मिट्टी की नमी पर्याप्त है।", mr: "सध्याच्या परिस्थितीनुसार मातीची आर्द्रता पुरेशी आहे.", gu: "વર્તમાન પરિસ્થિતિ મુજબ જમીનનો ભેજ પૂરતો છે.", bn: "বর্তমান অবস্থা অনুযায়ী মাটির আর্দ্রতা পর্যাপ্ত।", ta: "தற்போதைய நிலவரப்படி மண்ணின் ஈரப்பதம் போதுமானது.", te: "ప్రస్తుత పరిస్థితుల ఆధారంగా మట్టిలో తేమ సరిపోతుంది.", kn: "ಪ್ರಸ್ತುತ ಪರಿಸ್ಥಿತಿಗಳ ಆಧಾರದ ಮೇಲೆ ಮಣ್ಣಿನ ತೇವಾಂಶವು ಸಮರ್ಪಕವಾಗಿದೆ." }
 };
 
-// --- TRANSLATION DICTIONARY ---
-const I18N = {
-    en: {
-        app_title: "Smart Farm", connecting: "Connecting...", connected: "Connected", offline: "Offline",
-        offline_desc: "Ensure you are connected to the 'AgriSense_Node' Wi-Fi.", checking_soil: "Checking Soil...",
-        moisture_label: "Moisture:", state_critical: "Critically Dry", state_dry: "Needs Water",
-        state_perfect: "Perfectly Watered", state_wet: "Very Wet", temp_title: "Temperature", hum_title: "Humidity",
-        vpd_title: "VPD Stress", pump_title: "Water Pump", pump_on: "Watering Now", pump_off: "Not Watering",
-        auto_title: "Automatic Irrigation", auto_desc: "The farm will water itself between 30% and 60% moisture.",
-        disaster_title: "Disaster Prediction", disaster_desc: "Currently disabled. No environmental disaster sensors are connected. This is a future add-on feature.",
-        btn_water: "WATER NOW", btn_stop_water: "TURN PUMP OFF", btn_emergency: "EMERGENCY STOP", btn_sending: "SENDING...",
-        failsafe_alert: "DRY-RUN FAILSAFE TRIGGERED. PUMP DISABLED.", error_offline: "Error: Farm is offline.",
-        
-        // NEW: Qualitative terminology for Humidity and VPD
-        hum_dry: "Dry", hum_good: "Good", hum_high: "Very Humid",
-        vpd_low: "Low", vpd_good: "Excellent", vpd_high: "High", vpd_danger: "Danger"
-    },
-    hi: {
-        app_title: "स्मार्ट खेत", connecting: "जुड़ रहा है...", connected: "जुड़ा हुआ", offline: "ऑफ़लाइन",
-        offline_desc: "सुनिश्चित करें कि आप 'AgriSense_Node' वाई-फाई से जुड़े हैं।", checking_soil: "मिट्टी की जाँच...",
-        moisture_label: "नमी:", state_critical: "बहुत सूखा", state_dry: "पानी चाहिए",
-        state_perfect: "बिल्कुल सही", state_wet: "बहुत गीला", temp_title: "तापमान", hum_title: "नमी (Humidity)",
-        vpd_title: "वी.पी.डी. तनाव", pump_title: "वाटर पंप", pump_on: "सिंचाई चालू है", pump_off: "सिंचाई बंद है",
-        auto_title: "स्वचालित सिंचाई", auto_desc: "खेत 30% और 60% नमी के बीच अपने आप पानी ले लेगा।",
-        disaster_title: "आपदा भविष्यवाणी", disaster_desc: "वर्तमान में अक्षम। कोई पर्यावरण आपदा सेंसर जुड़ा नहीं है। यह भविष्य की सुविधा है।",
-        btn_water: "अभी पानी दें", btn_stop_water: "पंप बंद करें", btn_emergency: "आपातकालीन रोक", btn_sending: "भेज रहा है...",
-        failsafe_alert: "ड्राई-रन फेलसेफ ट्रिगर। पंप बंद कर दिया गया है।", error_offline: "त्रुटि: खेत ऑफ़लाइन है।",
-        
-        hum_dry: "सूखा", hum_good: "अच्छा", hum_high: "उमस भरा",
-        vpd_low: "कम", vpd_good: "उत्कृष्ट", vpd_high: "अधिक", vpd_danger: "खतरा"
-    },
-    mr: {
-        app_title: "स्मार्ट शेती", connecting: "जोडत आहे...", connected: "जोडले", offline: "ऑफलाइन",
-        offline_desc: "'AgriSense_Node' वाय-फाय शी जोडलेले असल्याची खात्री करा.", checking_soil: "माती तपासत आहे...",
-        moisture_label: "ओलावा:", state_critical: "अतिशय कोरडे", state_dry: "पाण्याची गरज",
-        state_perfect: "उत्तम ओलावा", state_wet: "खूप ओले", temp_title: "तापमान", hum_title: "आर्द्रता",
-        vpd_title: "VPD ताण", pump_title: "पाण्याचा पंप", pump_on: "पाणी चालू आहे", pump_off: "पाणी बंद आहे",
-        auto_title: "स्वयंचलित सिंचन", auto_desc: "मातीचा ओलावा ३०% आणि ६०% च्या दरम्यान असताना शेत आपोआप पाणी घेईल.",
-        disaster_title: "आपत्तीचा अंदाज", disaster_desc: "सध्या अक्षम. कोणतेही आपत्ती सेन्सर जोडलेले नाहीत. हे भविष्यातील वैशिष्ट्य आहे.",
-        btn_water: "आता पाणी द्या", btn_stop_water: "पंप बंद करा", btn_emergency: "तातडीने थांबवा", btn_sending: "पाठवत आहे...",
-        failsafe_alert: "ड्राय-रन फेलसेफ सुरू. पंप अक्षम केला आहे.", error_offline: "चूक: शेत ऑफलाइन आहे.",
-        
-        hum_dry: "कोरडे", hum_good: "चांगले", hum_high: "दमट",
-        vpd_low: "कमी", vpd_good: "उत्कृष्ट", vpd_high: "जास्त", vpd_danger: "धोका"
-    },
-    te: {
-        app_title: "స్మార్ట్ ఫార్మ్", connecting: "కనెక్ట్ అవుతోంది...", connected: "కనెక్ట్ చేయబడింది", offline: "ఆఫ్‌లైన్",
-        offline_desc: "మీరు Wi-Fi కి కనెక్ట్ అయ్యారని నిర్ధారించుకోండి.", checking_soil: "నేలను తనిఖీ చేస్తోంది...", 
-        moisture_label: "తేమ:", state_critical: "చాలా పొడిగా ఉంది", state_dry: "నీరు అవసరం", 
-        state_perfect: "పర్ఫెక్ట్", state_wet: "చాలా తడిగా ఉంది", temp_title: "ఉష్ణోగ్రత", hum_title: "గాలిలో తేమ", 
-        vpd_title: "VPD ఒత్తిడి", pump_title: "నీటి పంపు", pump_on: "నీరు పోస్తోంది", pump_off: "నీరు పోయడం లేదు", 
-        auto_title: "ఆటోమేటిక్ నీరు", auto_desc: "30% మరియు 60% తేమ మధ్య పొలం స్వయంచాలకంగా నీరు పోసుకుంటుంది.",
-        disaster_title: "విపత్తు అంచనా", disaster_desc: "ప్రస్తుతం నిలిపివేయబడింది. సెన్సార్లు కనెక్ట్ చేయబడలేదు. ఇది భవిష్యత్తు ఫీచర్.",
-        btn_water: "ఇప్పుడు నీరు పోయండి", btn_stop_water: "పంపును ఆపండి", btn_emergency: "అత్యవసర నిలుపుదల",
-        btn_sending: "పంపుతోంది...", failsafe_alert: "డ్రై-రన్ ఫెయిల్‌సేఫ్ ట్రిగ్గర్ చేయబడింది. పంపు నిలిపివేయబడింది.", error_offline: "పొలం ఆఫ్‌లైన్‌లో ఉంది.",
-        
-        hum_dry: "పొడిగా ఉంది", hum_good: "మంచిది", hum_high: "తేమగా ఉంది",
-        vpd_low: "తక్కువ", vpd_good: "అద్భుతమైన", vpd_high: "ఎక్కువ", vpd_danger: "ప్రమాదం"
-    },
-    ta: {
-        app_title: "ஸ்மார்ட் பண்ணை", connecting: "இணைக்கிறது...", connected: "இணைக்கப்பட்டது", offline: "ஆஃப்லைன்",
-        offline_desc: "வைஃபை உடன் இணைக்கப்பட்டுள்ளதா என உறுதிப்படுத்தவும்.", checking_soil: "மண் சோதிக்கப்படுகிறது...", 
-        moisture_label: "ஈரப்பதம்:", state_critical: "மிகவும் வறண்டது", state_dry: "நீர் தேவை", 
-        state_perfect: "சரியானது", state_wet: "மிகவும் ஈரமானது", temp_title: "வெப்பநிலை", hum_title: "காற்றில் ஈரப்பதம்", 
-        vpd_title: "VPD அழுத்தம்", pump_title: "நீர் பம்ப்", pump_on: "நீர் பாய்கிறது", pump_off: "நீர் பாயவில்லை", 
-        auto_title: "தானியங்கி பாசனம்", auto_desc: "30% முதல் 60% ஈரப்பதம் இடையே பண்ணை தானாகவே நீர்பாசனம் செய்யும்.",
-        disaster_title: "பேரழிவு கணிப்பு", disaster_desc: "தற்போது முடக்கப்பட்டுள்ளது. எந்த பேரிடர் உணரிகளும் இணைக்கப்படவில்லை.",
-        btn_water: "இப்போது நீர் பாய்ச்சு", btn_stop_water: "பம்பை நிறுத்து", btn_emergency: "அவசர நிறுத்தம்",
-        btn_sending: "அனுப்புகிறது...", failsafe_alert: "பாதுகாப்பு தூண்டப்பட்டது. பம்ப் நிறுத்தப்பட்டது.", error_offline: "பண்ணை ஆஃப்லைனில் உள்ளது.",
-        
-        hum_dry: "வறண்ட", hum_good: "நல்லது", hum_high: "ஈரப்பதம்",
-        vpd_low: "குறைவு", vpd_good: "சிறப்பானது", vpd_high: "அதிகம்", vpd_danger: "ஆபத்து"
+// --- 3. DOM Elements ---
+const DOM = {
+    overlay: document.getElementById('offline-overlay'),
+    langSelect: document.getElementById('lang-selector'),
+    mainStatus: document.getElementById('ui-main-status'),
+    soilPct: document.getElementById('val-soil-pct'),
+    pumpStatus: document.getElementById('ui-irrigation-status'),
+    forecastText: document.getElementById('ui-forecast-text'),
+    recommendationText: document.getElementById('ui-recommendation-text'),
+    toggleAuto: document.getElementById('toggle-auto'),
+    manualContainer: document.getElementById('manual-pump-container'),
+    btnPump: document.getElementById('btn-pump'),
+    humidity: document.getElementById('val-humidity'),
+    temp: document.getElementById('val-temp'),
+    vpd: document.getElementById('val-vpd'),
+    uptime: document.getElementById('val-uptime'),
+    trendChart: document.getElementById('trend-chart')
+};
+
+// --- 4. Core Application Logic ---
+
+// Apply translations dynamically to the DOM
+function updateLanguage() {
+    currentLang = DOM.langSelect.value;
+    
+    // Update simple static HTML text nodes by ID
+    Object.keys(translations).forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerText = translations[id][currentLang];
+    });
+    
+    // Immediately force re-render of dynamic application state texts
+    renderStatus();
+}
+
+// Translate utility function for JS dynamically generated strings
+function t(key) {
+    return translations[key] ? translations[key][currentLang] : key;
+}
+
+// Handle UI connection state
+function setOfflineState(offline) {
+    if (isOffline === offline) return;
+    isOffline = offline;
+    if (offline) {
+        DOM.overlay.classList.remove('hidden');
+    } else {
+        DOM.overlay.classList.add('hidden');
     }
-};
+}
 
-// Fill unmapped languages dynamically with English fallback to ensure stability
-const supportedLangs = ['kn','ml','bn','gu','pa','or','as'];
-supportedLangs.forEach(lang => { 
-    I18N[lang] = { ...I18N.en, app_title: `Smart Farm (${lang.toUpperCase()})` }; 
+// Fetch telemetry from ESP32
+async function fetchSensors() {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        
+        const response = await fetch(`${ESP32_BASE_URL}/sensors`, { 
+            signal: controller.signal,
+            cache: 'no-store'
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) throw new Error("HTTP Error");
+        
+        const data = await response.json();
+        setOfflineState(false);
+        processSensorData(data);
+    } catch (err) {
+        setOfflineState(true);
+    }
+}
+
+// Send POST request for Mode (Auto/Manual)
+async function setMode(isAuto) {
+    try {
+        await fetch(`${ESP32_BASE_URL}/mode`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auto_mode: isAuto })
+        });
+        fetchSensors(); // Refresh UI instantly 
+    } catch (err) {
+        console.error("Failed to change mode");
+    }
+}
+
+// Send POST request to Toggle Pump
+async function togglePump() {
+    try {
+        const action = pumpIsOn ? "OFF" : "ON";
+        await fetch(`${ESP32_BASE_URL}/pump`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: action })
+        });
+        fetchSensors(); // Refresh UI instantly
+    } catch (err) {
+        console.error("Failed to toggle pump");
+    }
+}
+
+// Update DOM elements with ESP32 data
+function processSensorData(data) {
+    hasData = true; // Prevents UI glitches before connection
+
+    // 1. Basic Values
+    DOM.soilPct.innerText = parseFloat(data.soil_moisture_pct).toFixed(1);
+    DOM.humidity.innerText = parseFloat(data.humidity_pct).toFixed(1);
+    DOM.temp.innerText = parseFloat(data.temperature_c).toFixed(1);
+    DOM.vpd.innerText = parseFloat(data.vpd_kpa).toFixed(2);
+    DOM.uptime.innerText = data.uptime;
+    
+    // 2. State & Controls
+    autoModeActive = data.auto_mode;
+    pumpIsOn = data.pump_status;
+    
+    DOM.toggleAuto.checked = autoModeActive;
+    DOM.manualContainer.style.display = autoModeActive ? 'none' : 'flex';
+    DOM.btnPump.style.backgroundColor = pumpIsOn ? 'var(--pastel-pink)' : 'var(--pastel-blue)';
+
+    // 3. Trends & History
+    updateTrend(data.soil_moisture_pct);
+
+    // 4. Update dynamic language text based on conditions
+    renderStatus(data.soil_moisture_pct);
+}
+
+// Agronomy UI & Dynamic Translations Logic
+function renderStatus(moisture = null) {
+    // Failsafe for initial boot up before data has arrived
+    if (!hasData) {
+        DOM.mainStatus.innerText = t('status_gathering');
+        DOM.mainStatus.style.color = "var(--text-main)";
+        DOM.pumpStatus.innerText = "--";
+        DOM.forecastText.innerText = t('status_gathering');
+        DOM.recommendationText.innerText = "";
+        DOM.btnPump.innerText = t('btn_turn_on');
+        return;
+    }
+
+    if (moisture === null) moisture = parseFloat(DOM.soilPct.innerText) || 0;
+    
+    // Irrigation & Pump texts
+    DOM.pumpStatus.innerText = pumpIsOn ? t('pump_on') : t('pump_off');
+    DOM.btnPump.innerText = pumpIsOn ? t('btn_turn_off') : t('btn_turn_on');
+
+    // Main title
+    if (pumpIsOn) {
+        DOM.mainStatus.innerText = t('status_watering');
+        DOM.mainStatus.style.color = "#2980B9";
+    } else if (moisture <= SOIL_DRY_THRESHOLD) {
+        DOM.mainStatus.innerText = t('status_dry');
+        DOM.mainStatus.style.color = "#C0392B";
+    } else {
+        DOM.mainStatus.innerText = t('status_perfect');
+        DOM.mainStatus.style.color = "#27AE60";
+    }
+
+    // Predictive insights & Recommendations
+    if (autoModeActive) {
+        DOM.forecastText.innerText = t('forecast_auto');
+        DOM.recommendationText.innerText = "";
+    } else {
+        if (moisture <= SOIL_DRY_THRESHOLD && !pumpIsOn) {
+            DOM.forecastText.innerText = t('forecast_soon');
+            DOM.recommendationText.innerText = t('rec_turn_on_pump');
+        } else {
+            DOM.forecastText.innerText = t('forecast_stable');
+            DOM.recommendationText.innerText = t('rec_soil_adequate');
+        }
+    }
+}
+
+// Handle Historical Array & DOM Chart
+function updateTrend(currentVal) {
+    historyData.push(currentVal);
+    if (historyData.length > 20) historyData.shift();
+
+    DOM.trendChart.innerHTML = '';
+    
+    historyData.forEach(val => {
+        const bar = document.createElement('div');
+        bar.className = 'chart-bar';
+        bar.style.height = `${val}%`;
+
+        if(val <= SOIL_DRY_THRESHOLD) {
+            bar.style.backgroundColor = "var(--pastel-pink)";
+        } else if (val >= SOIL_WET_THRESHOLD) {
+            bar.style.backgroundColor = "var(--pastel-blue)";
+        } else {
+            bar.style.backgroundColor = "var(--pastel-yellow)";
+        }
+        DOM.trendChart.appendChild(bar);
+    });
+}
+
+// --- 5. Event Listeners & Bootstrap ---
+
+DOM.langSelect.addEventListener('change', updateLanguage);
+
+DOM.toggleAuto.addEventListener('change', (e) => {
+    setMode(e.target.checked);
 });
 
-// --- STATE MANAGEMENT ---
-const State = {
-    connected: false,
-    preferences: { language: localStorage.getItem('sf_lang') || 'en' },
-    telemetry: { moisture: null, temperature: null, humidity: null, vpd: null },
-    system: { pumpRunning: false, autoMode: true, failsafe: false, alert: "" }
-};
+DOM.btnPump.addEventListener('click', () => {
+    togglePump();
+});
 
-// --- FAULT-TOLERANT PARSER ---
-const safeFloat = (val) => {
-    if (val === null || val === undefined) return null;
-    const parsed = parseFloat(val);
-    return isNaN(parsed) ? null : parsed;
-};
-
-// --- ESP32 API ADAPTER ---
-const API = {
-    async fetchWithTimeout(url, options = {}) {
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), CONFIG.TIMEOUT);
-        try {
-            const res = await fetch(url, { ...options, signal: controller.signal });
-            clearTimeout(id);
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            return await res.json();
-        } catch (err) {
-            clearTimeout(id);
-            throw err;
-        }
-    },
-    
-    async getStatus() {
-        const raw = await this.fetchWithTimeout(`${CONFIG.ESP32_BASE_URL}/sensors`);
-        return {
-            moisture: safeFloat(raw.soil_moisture_pct),
-            temperature: safeFloat(raw.temperature_c),
-            humidity: safeFloat(raw.humidity_pct),
-            vpd: safeFloat(raw.vpd_kpa),
-            pumpRunning: !!raw.pump_status,
-            autoMode: !!raw.auto_mode,
-            failsafe: !!raw.failsafe_triggered,
-            alertMessage: raw.alert_message || ""
-        };
-    },
-
-    async setPump(state) {
-        return this.fetchWithTimeout(`${CONFIG.ESP32_BASE_URL}/pump`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: state ? "ON" : "OFF" })
-        });
-    },
-
-    async setAutoMode(enabled) {
-        return this.fetchWithTimeout(`${CONFIG.ESP32_BASE_URL}/mode`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ auto_mode: enabled })
-        });
-    }
-};
-
-// --- UI CONTROLLER ---
-const UI = {
-    els: {},
-    init() {
-        // Cache DOM elements
-        ['dashboard', 'connection-status', 'offline-overlay', 'system-alert', 'alert-text',
-         'moisture-card', 'moisture-headline', 'moisture-value', 'temp-value', 
-         'humidity-status', 'humidity-value', 'vpd-status', 'vpd-value',
-         'pump-status', 'pump-animation', 'auto-toggle', 'btn-manual-water', 'btn-emergency-stop', 'failsafe-banner',
-         'toast-container', 'language-selector'].forEach(id => this.els[id] = document.getElementById(id));
-
-        // Bind Events
-        this.els['language-selector'].value = State.preferences.language;
-        this.els['language-selector'].addEventListener('change', (e) => this.changeLanguage(e.target.value));
-        this.els['auto-toggle'].addEventListener('change', (e) => App.toggleAutoMode(e.target.checked));
-        this.els['btn-manual-water'].addEventListener('click', () => App.togglePump());
-        this.els['btn-emergency-stop'].addEventListener('click', () => App.emergencyStop());
-        
-        this.applyTranslations();
-    },
-
-    t(key) {
-        const lang = State.preferences.language;
-        return I18N[lang][key] || I18N.en[key] || key;
-    },
-
-    changeLanguage(lang) {
-        State.preferences.language = lang;
-        localStorage.setItem('sf_lang', lang);
-        this.applyTranslations();
-        this.renderTelemetry(); 
-    },
-
-    applyTranslations() {
-        document.querySelectorAll('[data-i18n]').forEach(el => {
-            const key = el.getAttribute('data-i18n');
-            el.innerText = this.t(key);
-        });
-    },
-
-    renderConnection() {
-        const dot = this.els['connection-status'].querySelector('.status-dot');
-        const txt = this.els['connection-status'].querySelector('.status-text');
-        
-        dot.className = 'status-dot';
-        if (State.connected) {
-            dot.classList.add('connected');
-            txt.innerText = this.t('connected');
-            this.els['offline-overlay'].classList.add('hidden');
-            Array.from(this.els['dashboard'].children).forEach(c => {
-                if (c.tagName === 'SECTION') c.classList.remove('blurred');
-            });
-        } else {
-            dot.classList.add('error');
-            txt.innerText = this.t('offline');
-            this.els['offline-overlay'].classList.remove('hidden');
-            Array.from(this.els['dashboard'].children).forEach(c => {
-                if (c.tagName === 'SECTION') c.classList.add('blurred');
-            });
-        }
-    },
-
-    renderTelemetry() {
-        const m = State.telemetry.moisture;
-        const h = State.telemetry.humidity;
-        const t = State.telemetry.temperature;
-        const v = State.telemetry.vpd;
-        
-        // Moisture Logic
-        this.els['moisture-value'].innerText = m !== null ? `${m.toFixed(1)}%` : "--%";
-        if (m === null) {
-            this.els['moisture-headline'].innerText = this.t('checking_soil');
-            this.els['moisture-card'].className = "card primary-status";
-        } else if (m < 20) {
-            this.els['moisture-headline'].innerText = this.t('state_critical');
-            this.els['moisture-card'].className = "card primary-status bg-critical";
-        } else if (m < 35) {
-            this.els['moisture-headline'].innerText = this.t('state_dry');
-            this.els['moisture-card'].className = "card primary-status bg-dry";
-        } else if (m <= 70) {
-            this.els['moisture-headline'].innerText = this.t('state_perfect');
-            this.els['moisture-card'].className = "card primary-status bg-perfect";
-        } else {
-            this.els['moisture-headline'].innerText = this.t('state_wet');
-            this.els['moisture-card'].className = "card primary-status bg-wet";
-        }
-
-        // Temperature (Raw value only)
-        this.els['temp-value'].innerText = t !== null ? `${t.toFixed(1)} °C` : "-- °C";
-
-        // Humidity (Qualitative Translation)
-        if (h === null) {
-            this.els['humidity-status'].innerText = "--";
-            this.els['humidity-status'].className = "status-label";
-            this.els['humidity-value'].innerText = "--%";
-        } else {
-            this.els['humidity-value'].innerText = `${h.toFixed(1)}%`;
-            if (h < 40) {
-                this.els['humidity-status'].innerText = this.t('hum_dry');
-                this.els['humidity-status'].className = "status-label text-warn";
-            } else if (h <= 75) {
-                this.els['humidity-status'].innerText = this.t('hum_good');
-                this.els['humidity-status'].className = "status-label text-good";
-            } else {
-                this.els['humidity-status'].innerText = this.t('hum_high');
-                this.els['humidity-status'].className = "status-label text-danger";
-            }
-        }
-
-        // VPD (Qualitative Translation)
-        if (v === null) {
-            this.els['vpd-status'].innerText = "--";
-            this.els['vpd-status'].className = "status-label";
-            this.els['vpd-value'].innerText = "-- kPa";
-        } else {
-            this.els['vpd-value'].innerText = `${v.toFixed(2)} kPa`;
-            if (v < 0.4) {
-                this.els['vpd-status'].innerText = this.t('vpd_low');
-                this.els['vpd-status'].className = "status-label text-warn";
-            } else if (v <= 1.2) {
-                this.els['vpd-status'].innerText = this.t('vpd_good');
-                this.els['vpd-status'].className = "status-label text-good";
-            } else if (v <= 1.6) {
-                this.els['vpd-status'].innerText = this.t('vpd_high');
-                this.els['vpd-status'].className = "status-label text-warn";
-            } else {
-                this.els['vpd-status'].innerText = this.t('vpd_danger');
-                this.els['vpd-status'].className = "status-label text-danger";
-            }
-        }
-        
-        // Pump state
-        const p = State.system.pumpRunning;
-        this.els['pump-status'].innerText = p ? this.t('pump_on') : this.t('pump_off');
-        this.els['pump-status'].className = p ? "status-label text-good" : "status-label off";
-        p ? this.els['pump-animation'].classList.remove('hidden') : this.els['pump-animation'].classList.add('hidden');
-        
-        // Manual pump button
-        this.els['btn-manual-water'].innerText = p ? this.t('btn_stop_water') : this.t('btn_water');
-        this.els['btn-manual-water'].className = p ? "btn btn-danger outline" : "btn btn-primary";
-
-        // Auto Toggle state
-        this.els['auto-toggle'].checked = State.system.autoMode;
-
-        // Alerts & Failsafe Display
-        if (State.system.failsafe) {
-            this.els['failsafe-banner'].classList.remove('hidden');
-            this.els['system-alert'].classList.add('hidden'); 
-        } else {
-            this.els['failsafe-banner'].classList.add('hidden');
-            if (State.system.alert) {
-                this.els['system-alert'].classList.remove('hidden');
-                this.els['alert-text'].innerText = State.system.alert;
-            } else {
-                this.els['system-alert'].classList.add('hidden');
-            }
-        }
-    },
-
-    showToast(msg) {
-        const toast = document.createElement('div');
-        toast.className = 'toast';
-        toast.innerText = msg;
-        this.els['toast-container'].appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
-    }
-};
-
-// --- APPLICATION LOGIC ---
-const App = {
-    async init() {
-        UI.init();
-        this.loop();
-    },
-
-    async loop() {
-        try {
-            const data = await API.getStatus();
-            
-            if (!State.connected) {
-                State.connected = true;
-                UI.renderConnection();
-            }
-            
-            State.telemetry = { moisture: data.moisture, temperature: data.temperature, humidity: data.humidity, vpd: data.vpd };
-            State.system = { pumpRunning: data.pumpRunning, autoMode: data.autoMode, failsafe: data.failsafe, alert: data.alertMessage };
-
-            UI.renderTelemetry();
-        } catch (err) {
-            if (State.connected) {
-                State.connected = false;
-                UI.renderConnection();
-            }
-        }
-        
-        setTimeout(() => this.loop(), CONFIG.POLL_INTERVAL);
-    },
-
-    async toggleAutoMode(enable) {
-        if (!State.connected) {
-            UI.showToast(UI.t('error_offline'));
-            UI.els['auto-toggle'].checked = !enable; 
-            return;
-        }
-        try {
-            await API.setAutoMode(enable);
-            State.system.autoMode = enable;
-        } catch (e) {
-            UI.els['auto-toggle'].checked = !enable;
-        }
-    },
-
-    async togglePump() {
-        if (!State.connected) return UI.showToast(UI.t('error_offline'));
-        
-        const turnOn = !State.system.pumpRunning;
-        try {
-            UI.els['btn-manual-water'].innerText = UI.t('btn_sending');
-            await API.setPump(turnOn);
-        } catch (e) {
-            UI.renderTelemetry(); 
-        }
-    },
-
-    async emergencyStop() {
-        if (!State.connected) return UI.showToast(UI.t('error_offline'));
-        try {
-            await API.setPump(false);
-            UI.els['auto-toggle'].checked = false;
-            await API.setAutoMode(false);
-        } catch (e) {}
-    }
-};
-
-// Boot application
-document.addEventListener('DOMContentLoaded', () => App.init());
+// Init
+updateLanguage();
+setInterval(fetchSensors, POLL_INTERVAL_MS);
+fetchSensors();
